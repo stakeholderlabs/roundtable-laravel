@@ -6,12 +6,15 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Utils;
 use Illuminate\Config\Repository;
+use Shl\RoundTable\Entity\RoundtablePayloadEntity;
+use Shl\RoundTable\Exceptions\RoundtableMalformedPayloadException;
 use Shl\RoundTable\Exceptions\RoundtableNoResponseException;
 use Shl\RoundTable\Exceptions\RoundtableWrongResponseException;
 
 class Client
 {
     private const OBTAIN_TOKEN_URI = '/applications/connect-customer/token';
+    private const CIPHER = 'aes-256-cbc-hmac-sha256';
 
     private $client;
     private $config;
@@ -44,6 +47,34 @@ class Client
             $payload);
 
         return $response->get('link');
+    }
+
+    public function decryptRoundtablePayload(string $payload): RoundtablePayloadEntity
+    {
+        $this->init();
+
+        try {
+            $ivlen = openssl_cipher_iv_length(self::CIPHER);
+            $encodedString = base64_decode($payload);
+            $iv = substr($encodedString, 0, $ivlen);
+            $encodedJson = substr($encodedString, $ivlen);
+            $json = openssl_decrypt($encodedJson, self::CIPHER, $this->secretKey, OPENSSL_RAW_DATA, $iv);
+
+            return new RoundtablePayloadEntity(json_decode($json, true));
+        } catch (\Throwable $exception) {
+            throw new RoundtableMalformedPayloadException($payload, 400, $exception);
+        }
+    }
+
+    public function validateUserSignature(string $userId = null, ?string $signature = null)
+    {
+        if (!$userId || !$signature) {
+            throw new RoundtableMalformedPayloadException();
+        }
+
+        $localSignature = $this->getSignature($userId);
+
+        return $signature === $localSignature;
     }
 
     private function sendRequest(string $method, string $uri, array $headers, array $body): Response
