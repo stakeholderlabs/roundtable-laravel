@@ -6,14 +6,15 @@ use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Utils;
 use Illuminate\Config\Repository;
+use Shl\RoundTable\Endpoints\CustomerStocksEndpoint;
 use Shl\RoundTable\Entity\RoundtablePayloadEntity;
+use Shl\RoundTable\Enums\RoundtableUri;
 use Shl\RoundTable\Exceptions\RoundtableMalformedPayloadException;
 use Shl\RoundTable\Exceptions\RoundtableNoResponseException;
 use Shl\RoundTable\Exceptions\RoundtableWrongResponseException;
 
 class Client
 {
-    private const OBTAIN_TOKEN_URI = '/applications/connect-customer/token';
     private const CIPHER = 'aes-256-cbc-hmac-sha256';
 
     private $client;
@@ -39,12 +40,12 @@ class Client
 
         $response = $this->sendRequest(
             'POST',
-            self::OBTAIN_TOKEN_URI,
+            RoundtableUri::OBTAIN_TOKEN_URI,
+            $payload,
             [
                 'X-APP-KEY' => $this->publicKey,
                 'X-APP-SIGNATURE' => $signature
-            ],
-            $payload);
+            ]);
 
         return $response->get('link');
     }
@@ -66,7 +67,7 @@ class Client
         }
     }
 
-    public function validateUserSignature(string $userId = null, ?string $signature = null)
+    public function validateUserSignature(string $userId = null, ?string $signature = null): bool
     {
         if (!$userId || !$signature) {
             throw new RoundtableMalformedPayloadException();
@@ -77,7 +78,25 @@ class Client
         return $signature === $localSignature;
     }
 
-    private function sendRequest(string $method, string $uri, array $headers, array $body): Response
+    public function customerStocks(): CustomerStocksEndpoint
+    {
+        return new CustomerStocksEndpoint($this);
+    }
+
+    public function post(string $uri, array $payload, array $headers = []): Response
+    {
+        $this->init();
+
+        $signature = $this->getSignature(Utils::jsonEncode($payload));
+
+        $headers += [
+            'X-APP-SIGNATURE' => $signature
+        ];
+
+        return $this->sendRequest('POST', $uri, $payload, $headers);
+    }
+
+    protected function sendRequest(string $method, string $uri, array $body, array $headers = []): Response
     {
         $this->init();
 
@@ -135,7 +154,7 @@ class Client
         return new Response(Utils::jsonDecode($content, true));
     }
 
-    private function getSignature(string $payload): string
+    protected function getSignature(string $payload): string
     {
         return hash_hmac('sha256', $payload, $this->secretKey);
     }
